@@ -475,6 +475,132 @@ text-align:center
  }
 }
 
+/* =====================================================
+   SUPPLIER ANNUAL APPROVAL
+===================================================== */
+.approval-panel{
+ margin-top:20px;
+ border:1px solid #cbd5e1;
+ background:#fff;
+ border-radius:10px;
+ overflow:hidden;
+}
+.approval-panel-title{
+ padding:12px 15px;
+ background:#f8fafc;
+ font-size:14px;
+ font-weight:bold;
+ color:#1e293b;
+ border-bottom:1px solid #e2e8f0;
+}
+.approval-table{
+ width:100%;
+ border-collapse:collapse;
+ table-layout:fixed;
+}
+.approval-table th,
+.approval-table td{
+ border:1px solid #cbd5e1;
+ text-align:center;
+ padding:8px 6px;
+ font-size:11px;
+ vertical-align:middle;
+}
+.approval-table th{
+ background:#f8fafc;
+ font-weight:bold;
+}
+.approval-table td.approval-status{
+ height:72px;
+ font-size:12px;
+ font-weight:bold;
+}
+.approval-status-inner{
+ display:flex;
+ flex-direction:column;
+ align-items:center;
+ justify-content:center;
+ gap:5px;
+ min-height:58px;
+}
+.approval-check{
+ color:#16a34a;
+ font-size:15px;
+ font-weight:bold;
+}
+.approval-none{
+ color:#111827;
+}
+.approval-select{
+ width:100%;
+ max-width:105px;
+ padding:6px 5px;
+ font-size:11px;
+ border:1px solid #cbd5e1;
+ border-radius:5px;
+ background:#fff;
+}
+.approval-locked{
+ opacity:.75;
+}
+.approval-user{
+ font-size:10px;
+ color:#475569;
+ white-space:nowrap;
+ overflow:hidden;
+ text-overflow:ellipsis;
+ max-width:100%;
+}
+.approval-reject{
+ color:#dc2626;
+ font-size:12px;
+ font-weight:bold;
+}
+.approval-time{
+ font-size:9px;
+ color:#64748b;
+ white-space:nowrap;
+}
+.approval-history{
+ border-top:1px solid #e2e8f0;
+ background:#fff;
+}
+.approval-history-title{
+ padding:9px 12px 6px;
+ font-size:11px;
+ font-weight:bold;
+ color:#334155;
+}
+.approval-history-list{
+ padding:0 12px 8px;
+}
+.approval-history-row{
+ display:flex;
+ justify-content:space-between;
+ gap:12px;
+ padding:5px 0;
+ border-bottom:1px dashed #e2e8f0;
+ font-size:10px;
+ color:#475569;
+}
+.approval-history-row:last-child{
+ border-bottom:0;
+}
+.approval-note{
+ padding:8px 12px;
+ font-size:10px;
+ color:#64748b;
+ background:#f8fafc;
+ border-top:1px solid #e2e8f0;
+}
+@media(max-width:700px){
+ .approval-table{
+  min-width:620px;
+ }
+ .approval-panel{
+  overflow-x:auto;
+ }
+}
 @media(max-width:700px){
  .container{
   padding:12px
@@ -1877,15 +2003,74 @@ async function deletePerformanceOnGoogleSheets(record){
 ===================================================== */
 
 const LOGIN_USERS = {
- admin: { password:"admin123", role:"ADMIN" },
- user:  { password:"user123",  role:"USER" }
+ NTC_ADMIN:    { password:"admin12345678910",    role:"ADMIN", approvalRole:"MASTER" },
+ Mizuno_Hidehiko:   { password:"admin123",   role:"ADMIN", approvalRole:"ACKNOWLEDGED" },
+ Agus_Hariyanto:   { password:"admin123",    role:"ADMIN", approvalRole:"APPROVED" },
+ Adi_Prasetyo:   { password:"admin123",    role:"ADMIN", approvalRole:"CHECKED" },
+ Ilham_Maulana:   { password:"admin123",    role:"ADMIN", approvalRole:"PREPARED" },
+ NTC_User:     { password:"user123",     role:"USER" },
+ supplier1: { password:"supplier123", role:"SUPPLIER", supplierIndex:1 },
+supplier2: { password:"supplier123", role:"SUPPLIER", supplierIndex:2 },
 };
+
+/*
+  Supplier accounts are isolated by supplier.
+  Default account: supplier1 / supplier123
+  supplier1 is bound to the 1st supplier in the master supplier list.
+  Additional accounts can be added as supplier2, supplier3, etc.
+*/
+function getSupplierNamesAll(){
+ return [...new Set(
+  data.map(normalize).map(x=>String(x.name||"").trim()).filter(Boolean)
+ )].sort((a,b)=>a.localeCompare(b));
+}
+
+function getLoggedSupplier(){
+ const username = sessionStorage.getItem("supplierDashboardUser") || "";
+ const account = LOGIN_USERS[username];
+ if(!account || account.role !== "SUPPLIER") return "";
+ const suppliers = getSupplierNamesAll();
+ const idx = Number(account.supplierIndex || 0) - 1;
+ return idx >= 0 && idx < suppliers.length ? suppliers[idx] : "";
+}
 
 function applyRoleAccess(){
  const role = sessionStorage.getItem("supplierDashboardRole") || "";
  document.querySelectorAll(".admin-only").forEach(el=>{
   el.style.display = role === "ADMIN" ? "" : "none";
  });
+
+ const isSupplier = role === "SUPPLIER";
+ const overallTab = document.getElementById("tabOverall");
+ const supplierTab = document.getElementById("tabSupplier");
+ const currentTab = document.getElementById("tabCurrent");
+ const historyBtn = document.querySelector('.btn-gray[onclick="openRelevantHistory()"]');
+ const supplierSelect = document.getElementById("supplierSelect");
+ const supplierSearch = document.getElementById("supplierSearch");
+
+ if(overallTab) overallTab.style.display = isSupplier ? "none" : "";
+ if(currentTab) currentTab.style.display = isSupplier ? "none" : "";
+ if(supplierTab) supplierTab.style.display = "";
+ if(historyBtn) historyBtn.style.display = isSupplier ? "none" : "";
+
+ if(supplierSelect) supplierSelect.disabled = isSupplier;
+ if(supplierSearch){
+  supplierSearch.readOnly = isSupplier;
+  supplierSearch.style.background = isSupplier ? "#f1f5f9" : "";
+  supplierSearch.title = isSupplier ? "Supplier account: akses dibatasi ke supplier ini" : "";
+ }
+
+ if(isSupplier){
+  const supplier = getLoggedSupplier();
+  if(supplier){
+   if(supplierSearch) supplierSearch.value = supplier;
+   if(supplierSelect){
+    supplierSelect.innerHTML = `<option value="${escapeHTML(supplier)}">${escapeHTML(supplier)}</option>`;
+    supplierSelect.value = supplier;
+   }
+  }
+  showTab("supplier");
+ }
 }
 
 function showLoggedSession(){
@@ -1906,7 +2091,7 @@ function showLoggedSession(){
 }
 
 function loginUser(){
- const username = document.getElementById("loginUsername").value.trim().toLowerCase();
+ const username = document.getElementById("loginUsername").value.trim();
  const password = document.getElementById("loginPassword").value;
  const account = LOGIN_USERS[username];
  const error = document.getElementById("loginError");
@@ -1918,6 +2103,11 @@ function loginUser(){
  sessionStorage.setItem("supplierDashboardRole", account.role);
  error.textContent = "";
  showLoggedSession();
+
+ // If data has already loaded, immediately refresh the restricted view.
+ if(data.length){
+  refresh();
+ }
 }
 
 function logoutUser(){
@@ -1965,6 +2155,23 @@ function refresh(){
 ===================================================== */
 
 function updateSupplierDropdown(){
+
+ // Supplier accounts must never be offered another supplier in the selector.
+ if(sessionStorage.getItem("supplierDashboardRole") === "SUPPLIER"){
+  const supplier = getLoggedSupplier();
+  const select = document.getElementById("supplierSelect");
+  const search = document.getElementById("supplierSearch");
+  if(select && supplier){
+   select.innerHTML = `<option value="${escapeHTML(supplier)}">${escapeHTML(supplier)}</option>`;
+   select.value = supplier;
+   select.disabled = true;
+  }
+  if(search){
+   search.value = supplier;
+   search.readOnly = true;
+  }
+  return;
+ }
 
  let y =
  document.getElementById(
@@ -4498,6 +4705,155 @@ Gagal: ${fail}`
    SUPPLIER ANNUAL
 ===================================================== */
 
+/* =====================================================
+   SUPPLIER ANNUAL APPROVAL
+===================================================== */
+const APPROVAL_STAGES = [
+ {key:"acknowledged", label:"acknowledged", account:"Mizuno_Hidehiko", role:"ACKNOWLEDGED"},
+ {key:"approved",     label:"Approved",     account:"Agus_Hariyanto", role:"APPROVED"},
+ {key:"checked",      label:"Checked",      account:"Adi_Prasetyo", role:"CHECKED"},
+ {key:"prepared",     label:"Prepared",     account:"Ilham_Maulana", role:"PREPARED"}
+];
+
+function approvalStorageKey(year,supplier){
+ return "supplierAnnualApproval|" + String(year) + "|" + String(supplier).trim();
+}
+
+function getApprovalRecord(year,supplier){
+ try{
+  return JSON.parse(localStorage.getItem(approvalStorageKey(year,supplier)) || "{}") || {};
+ }catch(e){
+  return {};
+ }
+}
+
+function saveApprovalRecord(year,supplier,record){
+ localStorage.setItem(approvalStorageKey(year,supplier),JSON.stringify(record));
+}
+
+function getLoggedAccount(){
+ const username=sessionStorage.getItem("supplierDashboardUser") || "";
+ return LOGIN_USERS[username] || null;
+}
+
+function canEditApproval(stage){
+ const account=getLoggedAccount();
+ if(!account || account.role!=="ADMIN") return false;
+ if(account.approvalRole==="MASTER") return true;
+ return account.approvalRole===stage.role;
+}
+
+function setApprovalStatus(year,supplier,stageKey,value){
+ const stage=APPROVAL_STAGES.find(x=>x.key===stageKey);
+ if(!stage || !canEditApproval(stage)){
+  alert("Account ini tidak memiliki akses untuk mengubah approval pada kolom tersebut.");
+  refreshSupplierAnnual();
+  return;
+ }
+ const record=getApprovalRecord(year,supplier);
+ const username=sessionStorage.getItem("supplierDashboardUser") || "";
+ const now=new Date().toISOString();
+ const previous=record[stageKey] || {status:"NONE",by:"",approvedAt:"",history:[]};
+ const history=Array.isArray(previous.history) ? previous.history : [];
+ history.push({status:value,by:username,at:now});
+ record[stageKey]={
+  status:value,
+  by:value==="NONE" ? "" : username,
+  approvedAt:value==="APPROVED" ? now : (value==="NONE" ? "" : (previous.approvedAt || "")),
+  history:history
+ };
+ saveApprovalRecord(year,supplier,record);
+ refreshSupplierAnnual();
+}
+
+function formatApprovalDateTime(iso){
+ if(!iso) return "";
+ const d=new Date(iso);
+ if(Number.isNaN(d.getTime())) return "";
+ return d.toLocaleString("id-ID",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"});
+}
+
+function approvalHistoryRows(year,supplier){
+ const record=getApprovalRecord(year,supplier);
+ const rows=[];
+ APPROVAL_STAGES.forEach(stage=>{
+  const item=record[stage.key] || {};
+  const history=Array.isArray(item.history) ? item.history : [];
+  history.filter(h=>h && h.status==="APPROVED").forEach(h=>rows.push({stage:stage.label,by:h.by||"",at:h.at||""}));
+ });
+ rows.sort((a,b)=>new Date(b.at)-new Date(a.at));
+ return rows;
+}
+
+function approvalStatusCell(year,supplier,stage){
+ const record=getApprovalRecord(year,supplier);
+ const item=record[stage.key] || {status:"NONE",by:"",approvedAt:"",history:[]};
+ const editable=canEditApproval(stage);
+ const current=["NONE","REJECT","APPROVED"].includes(item.status) ? item.status : "NONE";
+ const safeSupplier=String(supplier).replace(/\\/g,"\\\\").replace(/'/g,"\\'");
+ return `
+  <td class="approval-status">
+   <div class="approval-status-inner">
+    <select class="approval-select ${editable ? "" : "approval-locked"}"
+     ${editable ? "" : "disabled"}
+     onchange="setApprovalStatus('${escapeHTML(String(year))}','${escapeHTML(safeSupplier)}','${stage.key}',this.value)"
+     title="${editable ? "Pilih status approval" : "Hanya account yang ditugaskan yang dapat mengubah approval"}">
+     <option value="NONE" ${current==="NONE" ? "selected" : ""}>NONE</option>
+     <option value="REJECT" ${current==="REJECT" ? "selected" : ""}>REJECT</option>
+     <option value="APPROVED" ${current==="APPROVED" ? "selected" : ""}>APPROVED</option>
+    </select>
+    ${current==="APPROVED" ? `<div class="approval-check">✓ APPROVED</div>` : current==="REJECT" ? `<div class="approval-reject">✕ REJECT</div>` : ``}
+    ${current!=="NONE" && item.by ? `<div class="approval-user">${escapeHTML(item.by)}</div>` : ``}
+    ${current==="APPROVED" && item.approvedAt ? `<div class="approval-time">${escapeHTML(formatApprovalDateTime(item.approvedAt))}</div>` : ``}
+   </div>
+  </td>
+ `;
+}
+
+function renderApprovalPanel(year,supplier){
+ const account=getLoggedAccount();
+ const isAdmin=account && account.role==="ADMIN";
+ const assigned=APPROVAL_STAGES.find(x=>x.role===account?.approvalRole);
+ const note=isAdmin
+  ? (account.approvalRole==="MASTER"
+     ? "Admin Master dapat mengubah seluruh kolom approval."
+     : "Account ini hanya dapat mengubah kolom: " + (assigned?.label || "-") + ".")
+  : "Approval hanya dapat diubah oleh role Admin.";
+
+ return `
+  <div class="approval-panel">
+   <div class="approval-panel-title">Approval</div>
+   <div style="overflow-x:auto">
+    <table class="approval-table">
+     <thead>
+      <tr>
+       <th>Received</th>
+       <th>Acknowledged</th>
+       <th>Approved</th>
+       <th>Checked</th>
+       <th>Prepared</th>
+      </tr>
+     </thead>
+     <tbody>
+      <tr>
+       <td class="approval-status"><div class="approval-status-inner"></div></td>
+       ${APPROVAL_STAGES.map(stage=>approvalStatusCell(year,supplier,stage)).join("")}
+      </tr>
+     </tbody>
+    </table>
+   </div>
+   ${approvalHistoryRows(year,supplier).length ? `
+    <div class="approval-history">
+     <div class="approval-history-title">Approval History</div>
+     <div class="approval-history-list">
+      ${approvalHistoryRows(year,supplier).map(h=>`<div class="approval-history-row"><span><b>${escapeHTML(h.stage)}</b> — ${escapeHTML(h.by)}</span><span>${escapeHTML(formatApprovalDateTime(h.at))}</span></div>`).join("")}
+     </div>
+    </div>` : ``}
+   <div class="approval-note">${escapeHTML(note)}</div>
+  </div>
+ `;
+}
+
 function refreshSupplierAnnual(){
 
  let y =
@@ -4509,6 +4865,22 @@ function refreshSupplierAnnual(){
  document.getElementById(
   "supplierSelect"
  ).value;
+
+ // Supplier account is permanently restricted to its assigned supplier.
+ if(sessionStorage.getItem("supplierDashboardRole") === "SUPPLIER"){
+  const loggedSupplier = getLoggedSupplier();
+  if(!loggedSupplier){
+   document.getElementById("supplierAnnualContent").innerHTML = `
+    <div style="padding:30px;text-align:center;color:#dc2626;background:#fef2f2;border-radius:10px">
+     Account supplier belum memiliki supplier yang terdaftar. Hubungi administrator.
+    </div>`;
+   return;
+  }
+  s = loggedSupplier;
+  document.getElementById("supplierSelect").value = s;
+  const search = document.getElementById("supplierSearch");
+  if(search) search.value = s;
+ }
 
  let b =
  document.getElementById(
@@ -4934,6 +5306,7 @@ function refreshSupplierAnnual(){
 
  </div>
 
+ ${renderApprovalPanel(y,s)}
 
  <!-- REJECT PROBLEM HISTORY PER SUPPLIER -->
  <div class="section" style="margin-top:20px">
@@ -5144,6 +5517,10 @@ function showHistory(){
 ===================================================== */
 
 function showTab(t){
+
+ if(sessionStorage.getItem("supplierDashboardRole") === "SUPPLIER"){
+  t = "supplier";
+ }
 
  ["overall","supplier","current"]
  .forEach(x=>{
