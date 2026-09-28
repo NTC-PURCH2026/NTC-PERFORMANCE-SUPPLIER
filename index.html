@@ -731,6 +731,7 @@ text-align:center
 <label>TAHUN</label>
 
 <select id="yearSelect" onchange="refresh()">
+<option>2025</option>
 <option>2026</option>
 <option>2027</option>
 <option>2028</option>
@@ -1447,6 +1448,15 @@ Cancel
 const API_URL =
 "https://script.google.com/macros/s/AKfycbzBglp55K4T-WhQfoJNRwOvXF0ItduQJl8zjbLFRo9QHYosUbFB9Y88XYNKs000V5qQfA/exec";
 
+async function apiFetch(url, options={}){
+ const token = sessionStorage.getItem("supplierDashboardToken") || "";
+ if(!token){
+  throw new Error("Session login tidak ditemukan. Silakan login kembali.");
+ }
+ const separator = url.includes("?") ? "&" : "?";
+ return fetch(url + separator + "token=" + encodeURIComponent(token), options);
+}
+
 
 /* =====================================================
    GLOBAL DATA
@@ -1461,6 +1471,7 @@ let editIndex = -1;
 let currentProblemIndex = -1;
 
 let importDataList = [];
+let approvalData = [];
 
 let monthlyChart = null;
 
@@ -1669,12 +1680,17 @@ function setLoading(show){
 
 async function loadPerformanceData(){
 
+ if(!sessionStorage.getItem("supplierDashboardToken")){
+  setLoading(false);
+  return;
+ }
+
  setLoading(true);
 
  try{
 
   const response =
-  await fetch(
+  await apiFetch(
    API_URL +
    "?action=performance&ts=" +
    Date.now(),
@@ -1762,7 +1778,7 @@ async function loadProblemData(){
  try{
 
   const response =
-  await fetch(
+  await apiFetch(
    API_URL +
    "?action=problems&ts=" +
    Date.now(),
@@ -1872,7 +1888,7 @@ async function savePerformanceToGoogleSheets(record){
  });
 
  const response =
- await fetch(
+ await apiFetch(
   API_URL + "?" + params.toString(),
   {
    cache:"no-store"
@@ -1940,7 +1956,7 @@ async function updatePerformanceOnGoogleSheets(record){
  });
 
  const response =
- await fetch(
+ await apiFetch(
   API_URL + "?" + params.toString(),
   {
    cache:"no-store"
@@ -1973,7 +1989,7 @@ async function deletePerformanceOnGoogleSheets(record){
   );
 
  const response =
- await fetch(
+ await apiFetch(
   API_URL +
   "?action=deletePerformance&id=" +
   encodeURIComponent(record.id) +
@@ -2002,23 +2018,7 @@ async function deletePerformanceOnGoogleSheets(record){
    LOGIN / ROLE CONTROL
 ===================================================== */
 
-const LOGIN_USERS = {
- NTC_ADMIN:    { password:"admin12345678910",    role:"ADMIN", approvalRole:"MASTER" },
- Mizuno_Hidehiko:   { password:"admin123",   role:"ADMIN", approvalRole:"ACKNOWLEDGED" },
- Agus_Hariyanto:   { password:"admin123",    role:"ADMIN", approvalRole:"APPROVED" },
- Adi_Prasetyo:   { password:"admin123",    role:"ADMIN", approvalRole:"CHECKED" },
- Ilham_Maulana:   { password:"admin123",    role:"ADMIN", approvalRole:"PREPARED" },
- NTC_User:     { password:"user123",     role:"USER" },
- supplier1: { password:"supplier123", role:"SUPPLIER", supplierIndex:1 },
-supplier2: { password:"supplier123", role:"SUPPLIER", supplierIndex:2 },
-};
-
-/*
-  Supplier accounts are isolated by supplier.
-  Default account: supplier1 / supplier123
-  supplier1 is bound to the 1st supplier in the master supplier list.
-  Additional accounts can be added as supplier2, supplier3, etc.
-*/
+/* Login accounts are stored in Google Sheets (USERS sheet). */
 function getSupplierNamesAll(){
  return [...new Set(
   data.map(normalize).map(x=>String(x.name||"").trim()).filter(Boolean)
@@ -2026,12 +2026,7 @@ function getSupplierNamesAll(){
 }
 
 function getLoggedSupplier(){
- const username = sessionStorage.getItem("supplierDashboardUser") || "";
- const account = LOGIN_USERS[username];
- if(!account || account.role !== "SUPPLIER") return "";
- const suppliers = getSupplierNamesAll();
- const idx = Number(account.supplierIndex || 0) - 1;
- return idx >= 0 && idx < suppliers.length ? suppliers[idx] : "";
+ return sessionStorage.getItem("supplierDashboardSupplier") || "";
 }
 
 function applyRoleAccess(){
@@ -2090,29 +2085,67 @@ function showLoggedSession(){
  }
 }
 
-function loginUser(){
+async function loginUser(){
  const username = document.getElementById("loginUsername").value.trim();
  const password = document.getElementById("loginPassword").value;
- const account = LOGIN_USERS[username];
  const error = document.getElementById("loginError");
- if(!account || account.password !== password){
-  error.textContent = "Username atau password salah.";
+
+ if(!username || !password){
+  error.textContent = "Username dan password wajib diisi.";
   return;
  }
- sessionStorage.setItem("supplierDashboardUser", username);
- sessionStorage.setItem("supplierDashboardRole", account.role);
- error.textContent = "";
- showLoggedSession();
 
- // If data has already loaded, immediately refresh the restricted view.
- if(data.length){
-  refresh();
+ try{
+  const params = new URLSearchParams({
+   action:"login",
+   username:username,
+   password:password
+  });
+
+  const response = await fetch(API_URL + "?" + params.toString(), {
+   cache:"no-store"
+  });
+  const result = await response.json();
+
+  if(!response.ok || !result.success){
+   throw new Error(result.message || "Username atau password salah.");
+  }
+
+  sessionStorage.setItem("supplierDashboardToken", result.token || "");
+  sessionStorage.setItem("supplierDashboardUser", result.user || username);
+  sessionStorage.setItem("supplierDashboardRole", result.role || "");
+  sessionStorage.setItem("supplierDashboardApprovalRole", result.approvalRole || "");
+  sessionStorage.setItem("supplierDashboardSupplier", result.supplier || "");
+
+  error.textContent = "";
+  showLoggedSession();
+
+  await loadPerformanceData();
+
+ }catch(e){
+  console.error(e);
+  error.textContent = e.message || "Login gagal.";
  }
 }
 
-function logoutUser(){
+async function logoutUser(){
+ const token = sessionStorage.getItem("supplierDashboardToken") || "";
+ try{
+  if(token){
+   await fetch(API_URL + "?action=logout&token=" + encodeURIComponent(token), {
+    cache:"no-store"
+   });
+  }
+ }catch(e){
+  console.warn("Logout server gagal:",e);
+ }
+
+ sessionStorage.removeItem("supplierDashboardToken");
  sessionStorage.removeItem("supplierDashboardUser");
  sessionStorage.removeItem("supplierDashboardRole");
+ sessionStorage.removeItem("supplierDashboardApprovalRole");
+ sessionStorage.removeItem("supplierDashboardSupplier");
+
  document.getElementById("loginUsername").value="";
  document.getElementById("loginPassword").value="";
  document.getElementById("loginError").textContent="";
@@ -2128,11 +2161,50 @@ function requireAdmin(){
 }
 
 /* =====================================================
+   LOAD APPROVAL DATA FROM GOOGLE SHEETS
+===================================================== */
+async function loadApprovalData(){
+ const token = sessionStorage.getItem("supplierDashboardToken") || "";
+ if(!token){
+  approvalData = [];
+  return;
+ }
+
+ const year = document.getElementById("yearSelect")?.value || "";
+ try{
+  const response = await apiFetch(
+   API_URL + "?action=approvals&year=" + encodeURIComponent(year) + "&ts=" + Date.now(),
+   {cache:"no-store"}
+  );
+
+  if(!response.ok) throw new Error("Approval data HTTP error");
+
+  const result = await response.json();
+  if(!Array.isArray(result)) throw new Error(result.message || "Format approval tidak valid.");
+
+  approvalData = result.map(x=>({
+   id:String(x.id||""),
+   year:String(x.year||""),
+   supplier:String(x.supplier||""),
+   stage:String(x.stage||"").toUpperCase(),
+   status:String(x.status||"NONE").toUpperCase(),
+   username:String(x.username||""),
+   datetime:x.datetime || ""
+  }));
+ }catch(e){
+  console.error("Approval load error:",e);
+  approvalData = [];
+ }
+}
+
+
+/* =====================================================
    REFRESH
 ===================================================== */
 
-function refresh(){
+async function refresh(){
 
+ await loadApprovalData();
  updateSupplierDropdown();
 
  displayCurrentMonth();
@@ -4041,7 +4113,7 @@ async function saveProblems(){
   /* Hapus data problem lama
      supplier + bulan yang sama */
 
-  await fetch(
+  await apiFetch(
 
    API_URL +
 
@@ -4088,7 +4160,7 @@ async function saveProblems(){
 
 
    const response =
-   await fetch(
+   await apiFetch(
 
     API_URL +
     "?" +
@@ -4709,31 +4781,19 @@ Gagal: ${fail}`
    SUPPLIER ANNUAL APPROVAL
 ===================================================== */
 const APPROVAL_STAGES = [
- {key:"acknowledged", label:"acknowledged", account:"Mizuno_Hidehiko", role:"ACKNOWLEDGED"},
+ {key:"acknowledged", label:"Acknowledged", account:"Mizuno_Hidehiko", role:"ACKNOWLEDGED"},
  {key:"approved",     label:"Approved",     account:"Agus_Hariyanto", role:"APPROVED"},
  {key:"checked",      label:"Checked",      account:"Adi_Prasetyo", role:"CHECKED"},
  {key:"prepared",     label:"Prepared",     account:"Ilham_Maulana", role:"PREPARED"}
 ];
 
-function approvalStorageKey(year,supplier){
- return "supplierAnnualApproval|" + String(year) + "|" + String(supplier).trim();
-}
-
-function getApprovalRecord(year,supplier){
- try{
-  return JSON.parse(localStorage.getItem(approvalStorageKey(year,supplier)) || "{}") || {};
- }catch(e){
-  return {};
- }
-}
-
-function saveApprovalRecord(year,supplier,record){
- localStorage.setItem(approvalStorageKey(year,supplier),JSON.stringify(record));
-}
-
 function getLoggedAccount(){
  const username=sessionStorage.getItem("supplierDashboardUser") || "";
- return LOGIN_USERS[username] || null;
+ const role=sessionStorage.getItem("supplierDashboardRole") || "";
+ const approvalRole=sessionStorage.getItem("supplierDashboardApprovalRole") || "";
+ const supplier=sessionStorage.getItem("supplierDashboardSupplier") || "";
+ if(!username || !role) return null;
+ return {username,role,approvalRole,supplier};
 }
 
 function canEditApproval(stage){
@@ -4743,34 +4803,83 @@ function canEditApproval(stage){
  return account.approvalRole===stage.role;
 }
 
-function setApprovalStatus(year,supplier,stageKey,value){
+function getApprovalRows(year,supplier){
+ return approvalData
+  .filter(x=>String(x.year)===String(year) && String(x.supplier).trim()===String(supplier).trim())
+  .sort((a,b)=>new Date(a.datetime)-new Date(b.datetime));
+}
+
+function getApprovalRecord(year,supplier){
+ const rows=getApprovalRows(year,supplier);
+ const record={};
+
+ APPROVAL_STAGES.forEach(stage=>{
+  const stageRows=rows.filter(x=>x.stage===stage.role);
+  const latest=stageRows.length ? stageRows[stageRows.length-1] : null;
+  const history=stageRows.map(x=>({
+   status:x.status,
+   by:x.username,
+   at:x.datetime
+  }));
+
+  record[stage.key]={
+   status:latest ? latest.status : "NONE",
+   by:latest ? latest.username : "",
+   approvedAt:latest && latest.status==="APPROVED" ? latest.datetime : "",
+   history:history
+  };
+ });
+
+ return record;
+}
+
+async function setApprovalStatus(year,supplier,stageKey,value){
  const stage=APPROVAL_STAGES.find(x=>x.key===stageKey);
  if(!stage || !canEditApproval(stage)){
   alert("Account ini tidak memiliki akses untuk mengubah approval pada kolom tersebut.");
-  refreshSupplierAnnual();
   return;
  }
- const record=getApprovalRecord(year,supplier);
- const username=sessionStorage.getItem("supplierDashboardUser") || "";
- const now=new Date().toISOString();
- const previous=record[stageKey] || {status:"NONE",by:"",approvedAt:"",history:[]};
- const history=Array.isArray(previous.history) ? previous.history : [];
- history.push({status:value,by:username,at:now});
- record[stageKey]={
-  status:value,
-  by:value==="NONE" ? "" : username,
-  approvedAt:value==="APPROVED" ? now : (value==="NONE" ? "" : (previous.approvedAt || "")),
-  history:history
- };
- saveApprovalRecord(year,supplier,record);
- refreshSupplierAnnual();
+
+ const token=sessionStorage.getItem("supplierDashboardToken") || "";
+ if(!token){
+  alert("Session login tidak ditemukan. Silakan login kembali.");
+  return;
+ }
+
+ try{
+  const params=new URLSearchParams({
+   action:"setApproval",
+   token:token,
+   year:String(year),
+   supplier:String(supplier),
+   stage:stage.role,
+   status:value
+  });
+
+  const response=await apiFetch(API_URL+"?"+params.toString(),{cache:"no-store"});
+  const result=await response.json();
+
+  if(!response.ok || !result.success){
+   throw new Error(result.message || "Approval gagal disimpan.");
+  }
+
+  await loadApprovalData();
+  refreshSupplierAnnual();
+
+ }catch(e){
+  console.error(e);
+  alert("❌ Gagal menyimpan approval.\n\n"+e.message);
+ }
 }
 
-function formatApprovalDateTime(iso){
- if(!iso) return "";
- const d=new Date(iso);
- if(Number.isNaN(d.getTime())) return "";
- return d.toLocaleString("id-ID",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"});
+function formatApprovalDateTime(value){
+ if(!value) return "";
+ const d=new Date(value);
+ if(Number.isNaN(d.getTime())) return String(value);
+ return d.toLocaleString("id-ID",{
+  day:"2-digit",month:"2-digit",year:"numeric",
+  hour:"2-digit",minute:"2-digit",second:"2-digit"
+ });
 }
 
 function approvalHistoryRows(year,supplier){
@@ -4778,8 +4887,9 @@ function approvalHistoryRows(year,supplier){
  const rows=[];
  APPROVAL_STAGES.forEach(stage=>{
   const item=record[stage.key] || {};
-  const history=Array.isArray(item.history) ? item.history : [];
-  history.filter(h=>h && h.status==="APPROVED").forEach(h=>rows.push({stage:stage.label,by:h.by||"",at:h.at||""}));
+  (item.history||[]).filter(h=>h && h.status==="APPROVED").forEach(h=>{
+   rows.push({stage:stage.label,by:h.by||"",at:h.at||""});
+  });
  });
  rows.sort((a,b)=>new Date(b.at)-new Date(a.at));
  return rows;
@@ -5563,10 +5673,11 @@ document.getElementById(
 ).value="08";
 
 
-loadPerformanceData();
-
-
 showLoggedSession();
+
+if(sessionStorage.getItem("supplierDashboardToken")){
+ loadPerformanceData();
+}
 </script>
 
 </body>
