@@ -1680,12 +1680,11 @@ function setLoading(show){
 
 async function loadPerformanceData(){
 
- if(!sessionStorage.getItem("supplierDashboardToken")){
+ const requestToken = sessionStorage.getItem("supplierDashboardToken") || "";
+ if(!requestToken){
   setLoading(false);
   return;
  }
-
- setLoading(true);
 
  try{
 
@@ -1707,6 +1706,10 @@ async function loadPerformanceData(){
 
   const result =
   await response.json();
+
+  if(sessionStorage.getItem("supplierDashboardToken") !== requestToken){
+   return;
+  }
 
   if(!Array.isArray(result))
    throw new Error(
@@ -1747,9 +1750,7 @@ async function loadPerformanceData(){
 
   }));
 
-  await loadProblemData();
-
-  refresh();
+  return true;
 
  }catch(error){
 
@@ -1759,10 +1760,6 @@ async function loadPerformanceData(){
    "Gagal mengambil data Google Sheets.\n\n" +
    error.message
   );
-
- }finally{
-
-  setLoading(false);
 
  }
 
@@ -1774,6 +1771,9 @@ async function loadPerformanceData(){
 ===================================================== */
 
 async function loadProblemData(){
+
+ const requestToken = sessionStorage.getItem("supplierDashboardToken") || "";
+ if(!requestToken){ problemData=[]; return; }
 
  try{
 
@@ -1799,6 +1799,10 @@ async function loadProblemData(){
    throw new Error(
     "Problem data format invalid"
    );
+
+  if(sessionStorage.getItem("supplierDashboardToken") !== requestToken){
+   return false;
+  }
 
   problemData =
   result.map(x => {
@@ -2068,6 +2072,30 @@ function applyRoleAccess(){
  }
 }
 
+function resetDashboardForAccountSwitch(message){
+ data = [];
+ problemData = [];
+ approvalData = [];
+
+ const annual = document.getElementById("supplierAnnualContent");
+ if(annual){
+  annual.innerHTML = `
+   <div class="account-data-loading" style="padding:36px;text-align:center;color:#64748b;background:#f8fafc;border-radius:10px">
+    <div style="font-weight:700;color:#0f172a;margin-bottom:6px">${escapeHTML(message || "Memuat data supplier...")}</div>
+    <div>Data supplier sedang diverifikasi dan dimuat dari server.</div>
+   </div>`;
+ }
+ const problemView = document.getElementById("problemHistoryView");
+ if(problemView) problemView.innerHTML = "";
+ const search = document.getElementById("supplierSearch");
+ const select = document.getElementById("supplierSelect");
+ if(search) search.value = "";
+ if(select){
+  select.innerHTML = `<option value="ALL">Semua Supplier</option>`;
+  select.value = "ALL";
+ }
+}
+
 function showLoggedSession(){
  const username = sessionStorage.getItem("supplierDashboardUser") || "";
  const role = sessionStorage.getItem("supplierDashboardRole") || "";
@@ -2111,6 +2139,9 @@ async function loginUser(){
    throw new Error(result.message || "Username atau password salah.");
   }
 
+  // Invalidate the previous account's client-side data before switching accounts.
+  resetDashboardForAccountSwitch("Memuat data supplier...");
+
   sessionStorage.setItem("supplierDashboardToken", result.token || "");
   sessionStorage.setItem("supplierDashboardUser", result.user || username);
   sessionStorage.setItem("supplierDashboardRole", result.role || "");
@@ -2120,7 +2151,7 @@ async function loginUser(){
   error.textContent = "";
   showLoggedSession();
 
-  await loadPerformanceData();
+  await loadDashboardDataFast();
 
  }catch(e){
   console.error(e);
@@ -2146,6 +2177,8 @@ async function logoutUser(){
  sessionStorage.removeItem("supplierDashboardApprovalRole");
  sessionStorage.removeItem("supplierDashboardSupplier");
 
+ resetDashboardForAccountSwitch("Silakan login untuk melihat data supplier.");
+
  document.getElementById("loginUsername").value="";
  document.getElementById("loginPassword").value="";
  document.getElementById("loginError").textContent="";
@@ -2164,7 +2197,8 @@ function requireAdmin(){
    LOAD APPROVAL DATA FROM GOOGLE SHEETS
 ===================================================== */
 async function loadApprovalData(){
- const token = sessionStorage.getItem("supplierDashboardToken") || "";
+ const requestToken = sessionStorage.getItem("supplierDashboardToken") || "";
+ const token = requestToken;
  if(!token){
   approvalData = [];
   return;
@@ -2181,6 +2215,10 @@ async function loadApprovalData(){
 
   const result = await response.json();
   if(!Array.isArray(result)) throw new Error(result.message || "Format approval tidak valid.");
+
+  if(sessionStorage.getItem("supplierDashboardToken") !== requestToken){
+   return false;
+  }
 
   approvalData = result.map(x=>({
    id:String(x.id||""),
@@ -2199,12 +2237,70 @@ async function loadApprovalData(){
 
 
 /* =====================================================
+   FAST DASHBOARD LOAD
+   Load all required datasets in parallel so supplier login
+   does not wait for Performance -> Problems -> Approval sequentially.
+===================================================== */
+async function loadDashboardDataFast(){
+ const requestToken = sessionStorage.getItem("supplierDashboardToken") || "";
+ if(!requestToken){
+  setLoading(false);
+  return;
+ }
+
+ setLoading(true);
+
+ try{
+  const results = await Promise.allSettled([
+   loadPerformanceData(),
+   loadProblemData(),
+   loadApprovalData()
+  ]);
+
+  if(sessionStorage.getItem("supplierDashboardToken") !== requestToken){
+   return;
+  }
+
+  const performanceFailed = results[0].status === "rejected";
+  if(performanceFailed){
+   throw results[0].reason || new Error("Performance data gagal dimuat.");
+  }
+
+  const problemFailed = results[1].status === "rejected";
+  const approvalFailed = results[2].status === "rejected";
+
+  if(problemFailed){
+   console.warn("Reject Problem gagal dimuat:", results[1].reason);
+   problemData = [];
+  }
+  if(approvalFailed){
+   console.warn("Approval gagal dimuat:", results[2].reason);
+   approvalData = [];
+  }
+
+  await refresh(true);
+
+ }catch(error){
+  console.error(error);
+  alert(
+   "Gagal mengambil data Google Sheets.\n\n" +
+   (error.message || error)
+  );
+ }finally{
+  if(sessionStorage.getItem("supplierDashboardToken") === requestToken){
+   setLoading(false);
+  }
+ }
+}
+
+
+/* =====================================================
    REFRESH
 ===================================================== */
 
-async function refresh(){
+async function refresh(skipApproval=false){
 
- await loadApprovalData();
+ if(!skipApproval) await loadApprovalData();
  updateSupplierDropdown();
 
  displayCurrentMonth();
@@ -4413,6 +4509,7 @@ async function saveSupplier(){
   closeAdd();
 
   await loadPerformanceData();
+  await refresh(true);
 
 
   alert(
@@ -4517,6 +4614,7 @@ async function deleteSupplier(i){
   );
 
   await loadPerformanceData();
+  await refresh(true);
 
 
   alert(
@@ -4748,6 +4846,7 @@ async function importCSVData(){
 
 
   await loadPerformanceData();
+  await refresh(true);
 
   closeImport();
 
@@ -5673,10 +5772,13 @@ document.getElementById(
 ).value="08";
 
 
+if(sessionStorage.getItem("supplierDashboardToken")){
+ resetDashboardForAccountSwitch("Memuat data supplier...");
+}
 showLoggedSession();
 
 if(sessionStorage.getItem("supplierDashboardToken")){
- loadPerformanceData();
+ loadDashboardDataFast();
 }
 </script>
 
